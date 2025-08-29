@@ -1,0 +1,226 @@
+name: CI/CD Pipeline - Backend
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REPOSITORY_NAME: witple-backend
+  EKS_CLUSTER_NAME: witple-cluster
+  EKS_NAMESPACE: witple
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run Tests
+      run: |
+        echo "Running tests..."
+        # python -m pytest (테스트 파일 추가 시)
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    # AWS 자격 증명 구성 (OIDC 방식)
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+        aws-region: ${{ env.AWS_REGION }}
+        role-session-name: github-actions-${{ github.run_id }}
+        role-duration-seconds: 3600
+    
+    # ECR 로그인
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    
+    # 백엔드 빌드 및 푸시
+    - name: Build and push Backend image
+      run: |
+        docker build -t witple-backend .
+        docker tag witple-backend:latest ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_NAME }}:latest
+        docker tag witple-backend:latest ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_NAME }}:${{ github.sha }}
+        docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_NAME }}:latest
+        docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_NAME }}:${{ github.sha }}
+    
+    # EKS 설정 및 Access Entries 적용
+    - name: Configure EKS access
+      run: |
+        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+        aws sts get-caller-identity
+        
+        # Check if EKS cluster is accessible via AWS CLI
+        echo "Checking EKS cluster accessibility..."
+        if aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
+          echo "EKS cluster is accessible via AWS CLI"
+        else
+          echo "Cannot access EKS cluster via AWS CLI"
+          exit 1
+        fi
+        
+        # Get current AWS identity
+        CURRENT_ARN=$(aws sts get-caller-identity --query 'Arn' --output text)
+        echo "Current AWS ARN: $CURRENT_ARN"
+        
+        # Create EKS Access Entry for GitHub Actions role
+        echo "Creating EKS Access Entry for GitHub Actions role..."
+        aws eks create-access-entry \
+          --cluster-name ${{ env.EKS_CLUSTER_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --principal-arn "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role" \
+          --type Standard \
+          --kubernetes-groups system:masters || {
+          echo "Access entry creation failed or already exists"
+        }
+        
+        # Test kubectl access
+        kubectl get nodes
+    
+    # 환경 변수 설정 (개선된 버전)
+    - name: Set environment variables
+      run: |
+        echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
+        echo "ECR_REPOSITORY_NAME=${{ env.ECR_REPOSITORY_NAME }}" >> $GITHUB_ENV
+        echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> $GITHUB_ENV
+        echo "ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}" >> $GITHUB_ENV
+        
+        # DOMAIN_NAME 처리 (비어있으면 ALB DNS만 사용)
+        DOMAIN_NAME="${{ secrets.DOMAIN_NAME }}"
+        if [ -z "$DOMAIN_NAME" ] || [ "$DOMAIN_NAME" = "" ]; then
+          echo "DOMAIN_NAME is empty, will use ALB DNS only"
+          echo "USE_DOMAIN=false" >> $GITHUB_ENV
+          echo "DOMAIN_NAME=" >> $GITHUB_ENV
+        else
+          echo "DOMAIN_NAME=$DOMAIN_NAME" >> $GITHUB_ENV
+          echo "USE_DOMAIN=true" >> $GITHUB_ENV
+        fi
+        
+        # Base64 인코딩
+        echo "DATABASE_URL_BASE64=$(echo -n '${{ secrets.DATABASE_URL }}' | base64)" >> $GITHUB_ENV
+        echo "REDIS_URL_BASE64=$(echo -n '${{ secrets.REDIS_URL }}' | base64)" >> $GITHUB_ENV
+    
+    # 데이터베이스 시크릿 생성
+    - name: Create database secret
+      run: |
+        echo "Creating database secret..."
+        
+        # kubectl을 사용하여 직접 시크릿 생성 (기존 시크릿이 있으면 삭제 후 재생성)
+        kubectl delete secret db-secret -n ${{ env.EKS_NAMESPACE }} --ignore-not-found=true
+        
+        kubectl create secret generic db-secret \
+          --namespace=${{ env.EKS_NAMESPACE }} \
+          --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+          --from-literal=REDIS_URL="${{ secrets.REDIS_URL }}"
+        
+        echo "Secret created successfully using kubectl"
+        
+        # 시크릿 확인
+        kubectl get secret db-secret -n ${{ env.EKS_NAMESPACE }} -o yaml
+    
+    # Kubernetes 매니페스트 적용 (개선된 버전)
+    - name: Deploy to EKS
+      run: |
+        # 환경 변수 치환
+        envsubst < k8s/deployment.yaml > k8s/deployment-generated.yaml
+        envsubst < k8s/configmap.yaml > k8s/configmap-generated.yaml
+        
+        # 배포 (각 단계별로 확인)
+        echo "Creating namespace..."
+        kubectl apply -f k8s/namespace.yaml
+        
+        echo "Applying ConfigMap..."
+        kubectl apply -f k8s/configmap-generated.yaml
+        
+        echo "Database secret already created in previous step..."
+        
+        echo "Deploying backend..."
+        kubectl apply -f k8s/deployment-generated.yaml
+        kubectl apply -f k8s/service.yaml
+        
+        echo "Applying Ingress..."
+        kubectl apply -f k8s/ingress.yaml
+        echo "Ingress applied successfully"
+        
+        # Ingress 상태 확인
+        echo "=== Ingress Status Check ==="
+        kubectl get ingress -n ${{ env.EKS_NAMESPACE }}
+        echo "Ingress details:"
+        kubectl describe ingress witple-backend-ingress -n ${{ env.EKS_NAMESPACE }}
+        
+        # 배포 상태 확인
+        echo "Waiting for backend deployment to be ready..."
+        kubectl rollout status deployment/witple-backend -n ${{ env.EKS_NAMESPACE }} --timeout=300s
+        
+        echo "Checking backend pods status..."
+        kubectl get pods -n ${{ env.EKS_NAMESPACE }} -l app=witple-backend
+        
+        # Ingress 상태 확인 및 ALB DNS 출력 (개선된 대기 로직)
+        echo "Waiting for Ingress to be ready..."
+        echo "Checking Ingress status every 10 seconds for up to 10 minutes..."
+        
+        # 최대 10분까지 대기 (10초마다 체크)
+        for i in {1..60}; do
+          echo "Attempt $i/60: Checking Ingress status..."
+          
+          # Ingress 상태 확인
+          INGRESS_STATUS=$(kubectl get ingress witple-backend-ingress -n ${{ env.EKS_NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+          
+          if [ -n "$INGRESS_STATUS" ]; then
+            echo "✅ Ingress is ready! ALB DNS: $INGRESS_STATUS"
+            break
+          fi
+          
+          if [ $i -eq 60 ]; then
+            echo "❌ Ingress failed to become ready after 10 minutes"
+            echo "=== Debug Information ==="
+            kubectl describe ingress witple-backend-ingress -n ${{ env.EKS_NAMESPACE }}
+            kubectl get events -n ${{ env.EKS_NAMESPACE }} --sort-by='.lastTimestamp'
+            exit 1
+          fi
+          
+          echo "⏳ Ingress not ready yet, waiting 10 seconds..."
+          sleep 10
+        done
+        
+        # ALB DNS 이름 출력
+        ALB_DNS=$(kubectl get ingress witple-backend-ingress -n ${{ env.EKS_NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        echo "ALB DNS Name: $ALB_DNS"
+        
+        # ALB DNS를 환경 변수로 설정
+        echo "API_URL=http://$ALB_DNS" >> $GITHUB_ENV
+        echo "ALB_DNS_NAME=$ALB_DNS" >> $GITHUB_ENV
+        
+        # 도메인 설정에 따른 URL 출력
+        if [ "$USE_DOMAIN" = "true" ]; then
+          echo "Backend API URL: https://api.$DOMAIN_NAME"
+          echo "ALB Direct Access: http://$ALB_DNS"
+        else
+          echo "Backend API URL: http://$ALB_DNS"
+          echo "Note: No custom domain configured. Access via ALB DNS only."
+        fi

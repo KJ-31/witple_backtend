@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: witple
+data:
+  ENVIRONMENT: "production"
+  SECRET_KEY: "${SECRET_KEY}"
+  ALLOWED_ORIGINS: "${ALLOWED_ORIGINS}"

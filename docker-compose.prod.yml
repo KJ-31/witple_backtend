@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # FastAPI 백엔드 (프로덕션)
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # AWS RDS PostgreSQL 사용 시 이 URL을 RDS 엔드포인트로 변경
+      - DATABASE_URL=postgresql://witple_user:witple_password@postgres:5432/witple
+      - ENVIRONMENT=production
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  # PostgreSQL (로컬용 - AWS RDS 사용 시 제거)
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: witple
+      POSTGRES_USER: witple_user
+      POSTGRES_PASSWORD: witple_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # Redis (프로덕션)
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
