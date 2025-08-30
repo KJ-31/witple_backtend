@@ -88,20 +88,23 @@ jobs:
         CURRENT_ARN=$(aws sts get-caller-identity --query 'Arn' --output text)
         echo "Current AWS ARN: $CURRENT_ARN"
         
-        # Create EKS Access Entry for GitHub Actions role
+        # Create EKS Access Entry for GitHub Actions role (if not exists)
         echo "Creating EKS Access Entry for GitHub Actions role..."
         aws eks create-access-entry \
           --cluster-name ${{ env.EKS_CLUSTER_NAME }} \
           --region ${{ env.AWS_REGION }} \
           --principal-arn "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role" \
-          --type Standard \
-          --kubernetes-groups system:masters || {
+          --type STANDARD || {
           echo "Access entry creation failed or already exists"
         }
         
         # Configure kubectl authentication with AWS CLI
         echo "Configuring kubectl authentication..."
         aws eks get-token --cluster-name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+        
+        # Apply RBAC for GitHub Actions
+        echo "Applying RBAC for GitHub Actions..."
+        kubectl apply -f k8s/github-actions-rbac.yaml
         
         # Test kubectl access
         kubectl get nodes
