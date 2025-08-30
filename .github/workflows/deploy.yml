@@ -94,7 +94,7 @@ jobs:
           --cluster-name ${{ env.EKS_CLUSTER_NAME }} \
           --region ${{ env.AWS_REGION }} \
           --principal-arn "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role" \
-          --type Standard \
+          --type STANDARD \
           --kubernetes-groups system:masters || {
           echo "Access entry creation failed or already exists"
         }
@@ -103,12 +103,8 @@ jobs:
         echo "Configuring kubectl authentication..."
         aws eks get-token --cluster-name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
         
-        # Apply RBAC for GitHub Actions
-        echo "Applying RBAC for GitHub Actions..."
-        AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }} envsubst < k8s/github-actions-rbac.yaml > k8s/github-actions-rbac-generated.yaml
-        kubectl apply -f k8s/github-actions-rbac-generated.yaml
-        
-        # Test kubectl access
+        # Test kubectl access (system:masters 권한으로)
+        echo "Testing kubectl access with system:masters permissions..."
         kubectl get nodes
     
     # AWS Load Balancer Controller ServiceAccount 생성
