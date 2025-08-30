@@ -94,7 +94,8 @@ jobs:
           --cluster-name ${{ env.EKS_CLUSTER_NAME }} \
           --region ${{ env.AWS_REGION }} \
           --principal-arn "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role" \
-          --type STANDARD || {
+          --type Standard \
+          --kubernetes-groups system:masters || {
           echo "Access entry creation failed or already exists"
         }
         
@@ -104,10 +105,55 @@ jobs:
         
         # Apply RBAC for GitHub Actions
         echo "Applying RBAC for GitHub Actions..."
-        kubectl apply -f k8s/github-actions-rbac.yaml
+        AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }} envsubst < k8s/github-actions-rbac.yaml > k8s/github-actions-rbac-generated.yaml
+        kubectl apply -f k8s/github-actions-rbac-generated.yaml
         
         # Test kubectl access
         kubectl get nodes
+    
+    # AWS Load Balancer Controller ServiceAccount 생성
+    - name: Create AWS Load Balancer Controller ServiceAccount
+      run: |
+        cat > aws-load-balancer-controller-sa.yaml << EOF
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: aws-load-balancer-controller
+          namespace: kube-system
+          annotations:
+            eks.amazonaws.com/role-arn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/aws-load-balancer-controller
+        EOF
+        kubectl apply -f aws-load-balancer-controller-sa.yaml --validate=false
+    
+    # Helm 설치
+    - name: Install Helm
+      run: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        helm version
+    
+    # AWS Load Balancer Controller 설치
+    - name: Install AWS Load Balancer Controller
+      run: |
+        # Helm을 사용하여 AWS Load Balancer Controller 설치
+        helm repo add eks https://aws.github.io/eks-charts
+        helm repo update
+        
+        # VPC ID 가져오기
+        VPC_ID=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        echo "VPC ID: $VPC_ID"
+        
+        # AWS Load Balancer Controller 설치 (기존 설치가 있다면 업그레이드)
+        helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+          -n kube-system \
+          --set clusterName=${{ env.EKS_CLUSTER_NAME }} \
+          --set serviceAccount.create=false \
+          --set serviceAccount.name=aws-load-balancer-controller \
+          --set region=${{ env.AWS_REGION }} \
+          --set vpcId=$VPC_ID \
+          --wait --timeout=300s
+        
+        # Controller가 준비될 때까지 대기
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-load-balancer-controller -n kube-system --timeout=300s
     
     # 환경 변수 설정 (개선된 버전)
     - name: Set environment variables
@@ -127,6 +173,15 @@ jobs:
           echo "DOMAIN_NAME=$DOMAIN_NAME" >> $GITHUB_ENV
           echo "USE_DOMAIN=true" >> $GITHUB_ENV
         fi
+        
+        # VPC 정보 가져오기 (Ingress용)
+        VPC_ID=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        PUBLIC_SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=tag:Name,Values=*public*" "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text | tr '\t' ',')
+        ALB_SECURITY_GROUP_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=*alb*" "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[0].GroupId' --output text)
+        
+        echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
+        echo "PUBLIC_SUBNET_IDS=$PUBLIC_SUBNET_IDS" >> $GITHUB_ENV
+        echo "ALB_SECURITY_GROUP_ID=$ALB_SECURITY_GROUP_ID" >> $GITHUB_ENV
         
         # Base64 인코딩
         echo "DATABASE_URL_BASE64=$(echo -n '${{ secrets.DATABASE_URL }}' | base64)" >> $GITHUB_ENV
@@ -157,6 +212,69 @@ jobs:
         envsubst < k8s/deployment.yaml > k8s/deployment-generated.yaml
         envsubst < k8s/configmap.yaml > k8s/configmap-generated.yaml
         
+        # Ingress 생성 (도메인 사용 여부에 따라 다르게 처리)
+        echo "=== Ingress Generation Debug ==="
+        echo "USE_DOMAIN: $USE_DOMAIN"
+        echo "DOMAIN_NAME: $DOMAIN_NAME"
+        echo "PUBLIC_SUBNET_IDS: $PUBLIC_SUBNET_IDS"
+        echo "ALB_SECURITY_GROUP_ID: $ALB_SECURITY_GROUP_ID"
+        
+        if [ "$USE_DOMAIN" = "true" ]; then
+          echo "Creating Ingress with domain: $DOMAIN_NAME"
+          envsubst < k8s/ingress.yaml > k8s/ingress-generated.yaml
+          echo "Ingress file created from template"
+        else
+          echo "Creating Ingress without domain (ALB DNS only)"
+          cat > k8s/ingress-generated.yaml << 'EOF'
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: witple-backend-ingress
+          namespace: witple
+          annotations:
+            kubernetes.io/ingress.class: "alb"
+            alb.ingress.kubernetes.io/scheme: "internet-facing"
+            alb.ingress.kubernetes.io/target-type: "ip"
+            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+            alb.ingress.kubernetes.io/group.name: "witple-backend"
+            alb.ingress.kubernetes.io/group.order: "1"
+            alb.ingress.kubernetes.io/healthcheck-path: "/api/v1/health"
+            alb.ingress.kubernetes.io/healthcheck-port: "80"
+            alb.ingress.kubernetes.io/healthcheck-protocol: "HTTP"
+            alb.ingress.kubernetes.io/success-codes: "200"
+        EOF
+          # 환경 변수 치환으로 서브넷과 보안 그룹 추가
+          cat >> k8s/ingress-generated.yaml << EOF
+            alb.ingress.kubernetes.io/subnets: "${PUBLIC_SUBNET_IDS}"
+            alb.ingress.kubernetes.io/security-groups: "${ALB_SECURITY_GROUP_ID}"
+        spec:
+          ingressClassName: alb
+          rules:
+          # ALB DNS로만 접근 (도메인 없음)
+          - http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: witple-backend-service
+                    port:
+                      number: 80
+        EOF
+        fi
+        
+        # Ingress 파일 생성 확인
+        echo "=== Ingress File Check ==="
+        if [ -f "k8s/ingress-generated.yaml" ]; then
+          echo "✅ Ingress file created successfully"
+          echo "File size: $(wc -c < k8s/ingress-generated.yaml) bytes"
+          echo "First 10 lines of Ingress file:"
+          head -10 k8s/ingress-generated.yaml
+        else
+          echo "❌ Ingress file not found!"
+          exit 1
+        fi
+        
         # 배포 (각 단계별로 확인)
         echo "Creating namespace..."
         kubectl apply -f k8s/namespace.yaml
@@ -171,7 +289,8 @@ jobs:
         kubectl apply -f k8s/service.yaml
         
         echo "Applying Ingress..."
-        kubectl apply -f k8s/ingress.yaml
+        echo "=== Ingress Apply Debug ==="
+        kubectl apply -f k8s/ingress-generated.yaml
         echo "Ingress applied successfully"
         
         # Ingress 상태 확인
@@ -225,9 +344,11 @@ jobs:
         
         # 도메인 설정에 따른 URL 출력
         if [ "$USE_DOMAIN" = "true" ]; then
-          echo "Backend API URL: https://api.$DOMAIN_NAME"
+          echo "Backend API URL: https://$DOMAIN_NAME"
           echo "ALB Direct Access: http://$ALB_DNS"
+          echo "Health Check: https://$DOMAIN_NAME/api/v1/health"
         else
           echo "Backend API URL: http://$ALB_DNS"
+          echo "Health Check: http://$ALB_DNS/api/v1/health"
           echo "Note: No custom domain configured. Access via ALB DNS only."
         fi

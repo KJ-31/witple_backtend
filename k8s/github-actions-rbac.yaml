@@ -8,5 +8,5 @@ roleRef:
   name: cluster-admin
 subjects:
 - kind: User
-  name: arn:aws:sts::737221504302:assumed-role/github-actions-role/*
+  name: arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/github-actions-role/*
   apiGroup: rbac.authorization.k8s.io

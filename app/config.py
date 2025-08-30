@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import Optional, List
 import os
 
@@ -27,13 +28,14 @@ class Settings(BaseSettings):
         env_file = ".env"
         case_sensitive = False
         
+    @field_validator('allowed_origins', mode='before')
     @classmethod
-    def parse_env_var(cls, field_name: str, raw_val: str):
-        if field_name == "allowed_origins":
-            if raw_val:
-                return [origin.strip() for origin in raw_val.split(",")]
+    def parse_allowed_origins(cls, v):
+        if isinstance(v, str):
+            if v:
+                return [origin.strip() for origin in v.split(",")]
             return ["http://localhost:3000", "http://127.0.0.1:3000", "http://172.21.102.114:3000"]
-        return raw_val
+        return v
 
 
 # 환경별 설정
