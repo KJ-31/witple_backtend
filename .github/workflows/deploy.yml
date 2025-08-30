@@ -195,6 +195,9 @@ jobs:
         echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
         echo "PUBLIC_SUBNET_IDS=$PUBLIC_SUBNET_IDS" >> $GITHUB_ENV
         echo "ALB_SECURITY_GROUP_ID=$ALB_SECURITY_GROUP_ID" >> $GITHUB_ENV
+        
+        # ACM 인증서 ARN 설정 (HTTPS용)
+        echo "CERTIFICATE_ARN=${{ secrets.CERTIFICATE_ARN }}" >> $GITHUB_ENV
     
     # 네임스페이스 생성 및 데이터베이스 시크릿 생성
     - name: Create namespace and database secret
