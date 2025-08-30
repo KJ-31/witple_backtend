@@ -263,7 +263,7 @@ jobs:
             alb.ingress.kubernetes.io/group.name: "witple-backend"
             alb.ingress.kubernetes.io/group.order: "1"
             alb.ingress.kubernetes.io/healthcheck-path: "/api/v1/health"
-            alb.ingress.kubernetes.io/healthcheck-port: "80"
+            alb.ingress.kubernetes.io/healthcheck-port: "8000"
             alb.ingress.kubernetes.io/healthcheck-protocol: "HTTP"
             alb.ingress.kubernetes.io/success-codes: "200"
         EOF
