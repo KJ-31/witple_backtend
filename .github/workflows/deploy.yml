@@ -188,10 +188,6 @@ jobs:
         echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
         echo "PUBLIC_SUBNET_IDS=$PUBLIC_SUBNET_IDS" >> $GITHUB_ENV
         echo "ALB_SECURITY_GROUP_ID=$ALB_SECURITY_GROUP_ID" >> $GITHUB_ENV
-        
-        # Base64 인코딩
-        echo "DATABASE_URL_BASE64=$(echo -n '${{ secrets.DATABASE_URL }}' | base64)" >> $GITHUB_ENV
-        echo "REDIS_URL_BASE64=$(echo -n '${{ secrets.REDIS_URL }}' | base64)" >> $GITHUB_ENV
     
     # 데이터베이스 시크릿 생성
     - name: Create database secret
@@ -208,8 +204,8 @@ jobs:
         
         echo "Secret created successfully using kubectl"
         
-        # 시크릿 확인
-        kubectl get secret db-secret -n ${{ env.EKS_NAMESPACE }} -o yaml
+        # 시크릿 확인 (Base64 디코딩 없이)
+        kubectl get secret db-secret -n ${{ env.EKS_NAMESPACE }}
     
     # Kubernetes 매니페스트 적용 (개선된 버전)
     - name: Deploy to EKS
