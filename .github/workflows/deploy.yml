@@ -337,32 +337,33 @@ jobs:
           
           # 재시도
           if ! kubectl rollout status deployment/witple-backend -n ${{ env.EKS_NAMESPACE }} --timeout=300s; then
-          echo "Backend deployment failed! Debugging..."
-          
-          echo "=== Backend Deployment Status ==="
-          kubectl describe deployment witple-backend -n ${{ env.EKS_NAMESPACE }}
-          
-          echo "=== Backend Pod Status ==="
-          kubectl get pods -n ${{ env.EKS_NAMESPACE }} -l app=witple-backend
-          
-          echo "=== Backend Pod Events ==="
-          kubectl get events -n ${{ env.EKS_NAMESPACE }} --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp'
-          
-          echo "=== Backend Pod Logs ==="
-          for pod in $(kubectl get pods -n ${{ env.EKS_NAMESPACE }} -l app=witple-backend -o jsonpath='{.items[*].metadata.name}'); do
-            echo "--- Pod: $pod ---"
-            echo "Current logs:"
-            kubectl logs $pod -n ${{ env.EKS_NAMESPACE }} --tail=100 || echo "No current logs available for $pod"
-            echo "Previous logs (if any):"
-            kubectl logs $pod -n ${{ env.EKS_NAMESPACE }} --previous --tail=100 || echo "No previous logs available for $pod"
-            echo "--- Pod Description: $pod ---"
-            kubectl describe pod $pod -n ${{ env.EKS_NAMESPACE }}
-          done
-          
-          echo "=== ECR Image Check ==="
-          echo "Backend image: ${ECR_REGISTRY}/${ECR_REPOSITORY_NAME}:latest"
-          
-          exit 1
+            echo "Backend deployment failed! Debugging..."
+            
+            echo "=== Backend Deployment Status ==="
+            kubectl describe deployment witple-backend -n ${{ env.EKS_NAMESPACE }}
+            
+            echo "=== Backend Pod Status ==="
+            kubectl get pods -n ${{ env.EKS_NAMESPACE }} -l app=witple-backend
+            
+            echo "=== Backend Pod Events ==="
+            kubectl get events -n ${{ env.EKS_NAMESPACE }} --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp'
+            
+            echo "=== Backend Pod Logs ==="
+            for pod in $(kubectl get pods -n ${{ env.EKS_NAMESPACE }} -l app=witple-backend -o jsonpath='{.items[*].metadata.name}'); do
+              echo "--- Pod: $pod ---"
+              echo "Current logs:"
+              kubectl logs $pod -n ${{ env.EKS_NAMESPACE }} --tail=100 || echo "No current logs available for $pod"
+              echo "Previous logs (if any):"
+              kubectl logs $pod -n ${{ env.EKS_NAMESPACE }} --previous --tail=100 || echo "No previous logs available for $pod"
+              echo "--- Pod Description: $pod ---"
+              kubectl describe pod $pod -n ${{ env.EKS_NAMESPACE }}
+            done
+            
+            echo "=== ECR Image Check ==="
+            echo "Backend image: ${ECR_REGISTRY}/${ECR_REPOSITORY_NAME}:latest"
+            
+            exit 1
+          fi
         fi
         
         echo "Checking backend pods status..."
