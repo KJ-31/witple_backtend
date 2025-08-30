@@ -33,9 +33,14 @@ class Settings(BaseSettings):
     def parse_allowed_origins(cls, v):
         if isinstance(v, str):
             if v:
-                return [origin.strip() for origin in v.split(",")]
-            return ["http://localhost:3000", "http://127.0.0.1:3000", "http://172.21.102.114:3000"]
-        return v
+                # 쉼표로 구분된 문자열을 리스트로 변환
+                origins = [origin.strip() for origin in v.split(",") if origin.strip()]
+                return origins if origins else ["http://localhost:3000", "http://127.0.0.1:3000"]
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        elif isinstance(v, list):
+            return v
+        else:
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 
 # 환경별 설정

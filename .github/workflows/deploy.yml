@@ -167,7 +167,14 @@ jobs:
         echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
         echo "ECR_REPOSITORY_NAME=${{ env.ECR_REPOSITORY_NAME }}" >> $GITHUB_ENV
         echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> $GITHUB_ENV
-        echo "ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}" >> $GITHUB_ENV
+        
+        # ALLOWED_ORIGINS를 리스트 형태로 처리
+        ALLOWED_ORIGINS_VALUE="${{ secrets.ALLOWED_ORIGINS }}"
+        if [ -n "$ALLOWED_ORIGINS_VALUE" ]; then
+          echo "ALLOWED_ORIGINS=$ALLOWED_ORIGINS_VALUE" >> $GITHUB_ENV
+        else
+          echo "ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000" >> $GITHUB_ENV
+        fi
         
         # DOMAIN_NAME 처리 (비어있으면 ALB DNS만 사용)
         DOMAIN_NAME="${{ secrets.DOMAIN_NAME }}"
