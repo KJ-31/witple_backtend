@@ -189,9 +189,12 @@ jobs:
         echo "PUBLIC_SUBNET_IDS=$PUBLIC_SUBNET_IDS" >> $GITHUB_ENV
         echo "ALB_SECURITY_GROUP_ID=$ALB_SECURITY_GROUP_ID" >> $GITHUB_ENV
     
-    # 데이터베이스 시크릿 생성
-    - name: Create database secret
+    # 네임스페이스 생성 및 데이터베이스 시크릿 생성
+    - name: Create namespace and database secret
       run: |
+        echo "Creating namespace..."
+        kubectl apply -f k8s/namespace.yaml
+        
         echo "Creating database secret..."
         
         # kubectl을 사용하여 직접 시크릿 생성 (기존 시크릿이 있으면 삭제 후 재생성)
@@ -278,8 +281,7 @@ jobs:
         fi
         
         # 배포 (각 단계별로 확인)
-        echo "Creating namespace..."
-        kubectl apply -f k8s/namespace.yaml
+        echo "Namespace already created in previous step..."
         
         echo "Applying ConfigMap..."
         kubectl apply -f k8s/configmap-generated.yaml
