@@ -203,6 +203,16 @@ docker-compose restart backend
 
 ### GitHub Actions 워크플로우
 
+#### OIDC 설정 (필수)
+GitHub Actions에서 AWS EKS에 배포하기 전에 OIDC 설정이 필요합니다:
+
+```bash
+# OIDC 설정 스크립트 실행
+./scripts/setup-oidc.sh
+```
+
+자세한 설정 방법은 [GITHUB_ACTIONS_OIDC_SETUP.md](GITHUB_ACTIONS_OIDC_SETUP.md)를 참조하세요.
+
 #### 개발 환경 배포
 ```bash
 # develop 브랜치에 푸시하면 자동 배포
@@ -302,6 +312,7 @@ docker-compose -f docker-compose.prod.yml up -d
 4. 데이터베이스 연결 확인
 5. Kubernetes 상태: `kubectl get pods -n witple`
 6. GitHub Actions 로그: Repository → Actions 탭
+7. **OIDC 오류**: `./scripts/setup-oidc.sh` 실행 후 GitHub Secrets 설정 확인
 
 ---
 
