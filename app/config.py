@@ -1,5 +1,4 @@
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
 from typing import Optional, List
 import os
 
@@ -21,26 +20,21 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     
-    # CORS 설정
-    allowed_origins: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000", "http://172.21.102.114:3000"]
+    # CORS 설정 (문자열로 받아서 내부에서 파싱)
+    allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     
     class Config:
         env_file = ".env"
         case_sensitive = False
+    
+    @property
+    def allowed_origins_list(self) -> List[str]:
+        """allowed_origins를 리스트로 변환"""
+        if not self.allowed_origins:
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
         
-    @field_validator('allowed_origins', mode='before')
-    @classmethod
-    def parse_allowed_origins(cls, v):
-        if isinstance(v, str):
-            if v:
-                # 쉼표로 구분된 문자열을 리스트로 변환
-                origins = [origin.strip() for origin in v.split(",") if origin.strip()]
-                return origins if origins else ["http://localhost:3000", "http://127.0.0.1:3000"]
-            return ["http://localhost:3000", "http://127.0.0.1:3000"]
-        elif isinstance(v, list):
-            return v
-        else:
-            return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        origins = [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+        return origins if origins else ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 
 # 환경별 설정
