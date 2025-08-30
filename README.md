@@ -5,7 +5,7 @@ FastAPI 기반의 백엔드 API 서버입니다.
 ## 🚀 기술 스택
 
 - **Framework**: FastAPI
-- **Database**: PostgreSQL (로컬 Docker), AWS RDS PostgreSQL (프로덕션)1
+- **Database**: PostgreSQL (로컬 Docker), AWS RDS PostgreSQL (프로덕션)
 - **ORM**: SQLAlchemy
 - **Authentication**: JWT
 - **Container**: Docker & Docker Compose
