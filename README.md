@@ -1,6 +1,6 @@
 # Witple Backend API
 
-FastAPI 기반의 백엔드 API 서버입니다.
+FastAPI 기반의 백엔드 API 서버입니다1.
 
 ## 🚀 기술 스택
 
